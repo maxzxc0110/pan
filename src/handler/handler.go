@@ -10,8 +10,9 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
-
+	"bb-pan/src/store/oss"
 	dblayer "bb-pan/src/db"
 )
 
@@ -58,6 +59,27 @@ func UploadHandler(w http.ResponseWriter,r *http.Request){
 		fileMeta.FileSha1 = util.FileSha1(newFile)
 
 		//meta.UpdateFileMeta(fileMeta)
+
+		// 游标重新回到文件头部
+		newFile.Seek(0,0)
+		// 文件写入Ceph存储
+		//data, _ := ioutil.ReadAll(newFile)
+		//cephPath := "/ceph/" + fileMeta.FileSha1
+		//_ = ceph.PutObject("userfile", cephPath, data)
+		//fileMeta.Location = cephPath
+
+
+		// 文件写入OSS存储
+		ossPath := "oss/" + fileMeta.FileSha1
+
+		err = oss.Bucket().PutObject(ossPath, newFile)
+		if err != nil {
+			fmt.Println(err.Error())
+			w.Write([]byte("Upload failed!"))
+			return
+		}
+		fileMeta.Location = ossPath
+
 
 		_ = meta.UpdateFileMetaDB(fileMeta)
 
@@ -256,6 +278,27 @@ func TryFastUploadHandler(w http.ResponseWriter, r *http.Request) {
 
 
 
+// DownloadURLHandler : 生成文件的下载地址
+func DownloadURLHandler(w http.ResponseWriter, r *http.Request) {
+	filehash := r.Form.Get("filehash")
+	// 从文件表查找记录
+	row, _ := dblayer.GetFileMeta(filehash)
+
+	// TODO: 判断文件存在OSS，还是Ceph，还是在本地
+	if strings.HasPrefix(row.FileAddr.String, "/tmp") {
+		username := r.Form.Get("username")
+		token := r.Form.Get("token")
+		tmpUrl := fmt.Sprintf("http://%s/file/download?filehash=%s&username=%s&token=%s",
+			r.Host, filehash, username, token)
+		w.Write([]byte(tmpUrl))
+	} else if strings.HasPrefix(row.FileAddr.String, "/ceph") {
+		// TODO: ceph下载url
+	} else if strings.HasPrefix(row.FileAddr.String, "oss/") {
+		// oss下载url
+		signedURL := oss.DownloadURL(row.FileAddr.String)
+		w.Write([]byte(signedURL))
+	}
+}
 
 
 
